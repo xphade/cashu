@@ -515,7 +515,7 @@ class Ledger:
         total_provided: int,
         invoice_amount: int,
         ln_fee_msat: int,
-        outputs: List[BlindedMessage],
+        outputs: Optional[List[BlindedMessage]],
         keyset: Optional[MintKeyset] = None,
     ):
         """Generates a set of new promises (blinded signatures) from a set of blank outputs
@@ -523,7 +523,10 @@ class Ledger:
         fee reserve provided by the wallet and the actual Lightning fee paid by the mint.
 
         If there is a positive difference, produces maximum `n_return_outputs` new outputs
-        with values close or equal to the fee difference. We can't be sure that we hit the
+        with values close or equal to the fee difference. If the given number of `outputs` matches
+        the number given by
+
+        We can't be sure that we hit the
         fee perfectly because we can only work with a limited set of blanket outputs and
         their values are limited to 2^n.
 
@@ -541,22 +544,24 @@ class Ledger:
         """
         # we make sure that the fee is positive
         ln_fee_msat = abs(ln_fee_msat)
-        # maximum number of change outputs (must be in consensus with wallet)
-        n_return_outputs = 4
+
         ln_fee_sat = math.ceil(ln_fee_msat / 1000)
         user_paid_fee_sat = total_provided - invoice_amount
+        overpaid_fee_sat = user_paid_fee_sat - ln_fee_sat
         logger.debug(
-            f"Lightning fee was: {ln_fee_sat}. User paid: {user_paid_fee_sat}. Returning difference."
+            f"Lightning fee was: {ln_fee_sat}. User paid: {user_paid_fee_sat}. "
+            f"Returning difference: {overpaid_fee_sat}."
         )
-        if user_paid_fee_sat - ln_fee_sat > 0 and outputs is not None:
-            # we will only accept at maximum n_return_outputs outputs
-            assert len(outputs) <= n_return_outputs, Exception(
-                "too many change outputs provided"
-            )
 
-            return_amounts = amount_split(user_paid_fee_sat - ln_fee_sat)
+        if overpaid_fee_sat > 0 and outputs is not None:
+            return_amounts = amount_split(overpaid_fee_sat)
+
+            # We return at most as many outputs as were provided or as many as are
+            # required to pay back the overpaid fee.
+            n_return_outputs = min(len(outputs), len(return_amounts))
+
             # we only need as many outputs as we have change to return
-            outputs = outputs[: len(return_amounts)]
+            outputs = outputs[:n_return_outputs]
             # we sort the return_amounts in descending order so we only
             # take the largest values in the next step
             return_amounts_sorted = sorted(return_amounts, reverse=True)
